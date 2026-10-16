@@ -41,6 +41,49 @@ install_pkg(){
  dnf) dnf install -y sing-box;;
  esac
 }
+valid_ipv4(){
+ local ip="$1" a b c d extra oct
+ IFS=. read -r a b c d extra <<< "$ip"
+ [[ -z "${extra:-}" && -n "${a:-}" && -n "${b:-}" && -n "${c:-}" && -n "${d:-}" ]] || return 1
+ for oct in "$a" "$b" "$c" "$d"; do
+  [[ "$oct" =~ ^[0-9]{1,3}$ ]] || return 1
+  (( 10#$oct <= 255 )) || return 1
+ done
+}
+public_ipv4(){
+ local ip="$1" a b c d
+ valid_ipv4 "$ip" || return 1
+ IFS=. read -r a b c d <<< "$ip"
+ (( 10#$a != 0 && 10#$a != 10 && 10#$a != 127 && 10#$a < 224 )) || return 1
+ (( !(10#$a == 169 && 10#$b == 254) )) || return 1
+ (( !(10#$a == 172 && 10#$b >= 16 && 10#$b <= 31) )) || return 1
+ (( !(10#$a == 192 && 10#$b == 168) )) || return 1
+ (( !(10#$a == 100 && 10#$b >= 64 && 10#$b <= 127) )) || return 1
+ (( !(10#$a == 192 && 10#$b == 0 && 10#$c == 0) )) || return 1
+ (( !(10#$a == 198 && (10#$b == 18 || 10#$b == 19)) )) || return 1
+ (( !(10#$a == 192 && 10#$b == 0 && 10#$c == 2) )) || return 1
+ (( !(10#$a == 198 && 10#$b == 51 && 10#$c == 100) )) || return 1
+ (( !(10#$a == 203 && 10#$b == 0 && 10#$c == 113) )) || return 1
+}
+auto_public_ip(){
+ local candidate='' url
+ if [[ -n "${SSH_CONNECTION:-}" ]]; then
+  candidate=$(awk '{print $3}' <<< "$SSH_CONNECTION")
+  if public_ipv4 "$candidate"; then printf '%s' "$candidate"; return 0; fi
+ fi
+ for url in https://api.ipify.org https://ipv4.icanhazip.com https://ifconfig.me/ip; do
+  candidate=''
+  if command -v curl >/dev/null 2>&1; then
+   candidate=$(curl -4fsSL --connect-timeout 3 --max-time 6 "$url" 2>/dev/null || true)
+  elif command -v wget >/dev/null 2>&1; then
+   candidate=$(wget -qO- -T 6 "$url" 2>/dev/null || true)
+  fi
+  candidate=${candidate//$'\r'/}
+  candidate=${candidate//$'\n'/}
+  if public_ipv4 "$candidate"; then printf '%s' "$candidate"; return 0; fi
+ done
+ return 1
+}
 valid_port(){ [[ "$1" =~ ^[0-9]+$ ]] && (( 10#$1 >= 1 && 10#$1 <= 65535 )); }
 read_port(){ local prompt=$1 default=$2 value; read -r -p "$prompt [$default]: " value; value=${value:-$default}; valid_port "$value" || fail "无效端口: $value"; printf '%s' "$value"; }
 install_node(){
@@ -48,8 +91,8 @@ install_node(){
  local localport host publicport keys private public uuid sid link
  read -r -p '内网监听 TCP 端口 [10000]: ' localport; localport=${localport:-10000}
  valid_port "$localport" || fail '内网端口无效'
- read -r -p '公网 IP 或域名: ' host
- [[ "$host" =~ ^[a-zA-Z0-9.-]+$ ]] || fail '公网地址只能包含字母、数字、点和连字符（暂不支持 IPv6 字面量）'
+ host=$(auto_public_ip) || fail '自动识别公网 IP 失败，请检查 VPS 的 HTTPS 出口网络'
+ say "自动识别公网 IP: $host"
  read -r -p "公网映射 TCP 端口 [$localport]: " publicport; publicport=${publicport:-$localport}
  valid_port "$publicport" || fail '公网端口无效'
  say "系统: $PRETTY_NAME | 架构: $ARCH | 内存限制: $LIMIT 字节"
