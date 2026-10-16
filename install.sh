@@ -36,10 +36,36 @@ else
 fi
 install_pkg(){
  case "$PKG" in
- apk) apk add --no-cache sing-box;;
- apt) export DEBIAN_FRONTEND=noninteractive; apt-get update; apt-get install -y ca-certificates sing-box;;
+ apk) apk add --no-cache sing-box >/dev/null 2>&1;;
+ apt) export DEBIAN_FRONTEND=noninteractive; apt-get update && apt-get install -y sing-box;;
  dnf) dnf install -y sing-box;;
  esac
+}
+install_official(){
+ local tmp tag version asset arch url folder
+ case "$ARCH" in x86_64) arch=amd64;; aarch64) arch=arm64;; esac
+ say '系统仓库未提供 sing-box，改从 SagerNet 官方 GitHub Releases 安装'
+ case "$PKG" in
+  apk) apk add --no-cache ca-certificates curl tar gzip >/dev/null || return 1;;
+  apt) apt-get install -y ca-certificates curl tar gzip || return 1;;
+  dnf) dnf install -y ca-certificates curl tar gzip || return 1;;
+ esac
+ tmp=$(mktemp -d) || return 1
+ tag=$(curl -fsSL --retry 2 --connect-timeout 8 --max-time 20 \
+   https://api.github.com/repos/SagerNet/sing-box/releases/latest \
+   | sed -n 's/^[[:space:]]*"tag_name": "\([^"]*\)".*/\1/p' | head -n1)
+ [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { rm -rf "$tmp"; fail '无法确认官方最新稳定版本'; }
+ version=${tag#v}
+ folder="sing-box-${version}-linux-${arch}"
+ url="https://github.com/SagerNet/sing-box/releases/download/${tag}/${folder}.tar.gz"
+ if ! curl -fL --retry 2 --connect-timeout 8 --max-time 180 "$url" -o "$tmp/sing-box.tar.gz"; then
+  rm -rf "$tmp"; return 1
+ fi
+ if ! tar -xzf "$tmp/sing-box.tar.gz" -C "$tmp" "$folder/sing-box"; then
+  rm -rf "$tmp"; return 1
+ fi
+ install -m 755 "$tmp/$folder/sing-box" /usr/local/bin/sing-box
+ rm -rf "$tmp"
 }
 valid_ipv4(){
  local ip="$1" a b c d extra oct
@@ -96,9 +122,9 @@ install_node(){
  read -r -p "公网映射 TCP 端口 [$localport]: " publicport; publicport=${publicport:-$localport}
  valid_port "$publicport" || fail '公网端口无效'
  say "系统: $PRETTY_NAME | 架构: $ARCH | 内存限制: $LIMIT 字节"
- say '安装 sing-box（仅使用系统仓库，不执行未知远程安装脚本）'
+ say '安装 sing-box（优先系统仓库，失败后使用官方 GitHub Release）'
  if ! command -v sing-box >/dev/null 2>&1; then
-  if ! install_pkg; then fail '系统仓库安装失败；请检查软件源，当前脚本不会自动引入第三方仓库'; fi
+  if ! install_pkg; then install_official || fail '官方 sing-box 下载或安装失败'; fi
  fi
  command -v sing-box >/dev/null 2>&1 || fail '找不到 sing-box 可执行文件'
  sing-box version || fail 'sing-box 无法执行（可能是内存不足）'
