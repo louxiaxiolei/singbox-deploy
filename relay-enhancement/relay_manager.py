@@ -202,5 +202,13 @@ def main():
         except KeyError:print("无效选项")
         except (RuntimeError,ValueError,OSError,subprocess.SubprocessError) as e:print("失败：",e)
 if __name__=="__main__":
-    try:main()
+    try:
+        if len(sys.argv)>1 and sys.argv[1]=="--wizard":
+            if os.geteuid()!=0:abort("需要 root")
+            wizard()
+        elif len(sys.argv)>1 and sys.argv[1]=="--restore":
+            if os.geteuid()!=0:abort("需要 root")
+            detach()
+        else:
+            main()
     except (KeyboardInterrupt,EOFError):print("\n退出")
