@@ -94,7 +94,8 @@ while true;do
   echo '4. 恢复节点直连'
   echo '5. 创建落地节点'
   echo '6. 管理落地节点（停用 / 启用 / 删除）'
-  echo '7. 查看运行状态和备份'\n  echo '8. 中转高级管理（添加/查看/删除落地）'
+  echo '7. 查看运行状态和备份' 
+  echo '8. 中转高级管理（添加/查看/删除落地）'
   echo '0. 退出'
   read -r -p '请选择: ' choice || exit 0
   case "$choice" in
@@ -104,7 +105,8 @@ while true;do
     4) ensure_curl && relay_menu restore || true;;
     5) ensure_curl && landing_create || true;;
     6) ensure_curl && landing_manage || true;;
-    7) status;;\n    8) ensure_curl && relay_menu || true;;
+    7) status;;
+    8) ensure_curl && relay_menu || true;;
     0) exit 0;;
     *) echo '无效选项';;
   esac
