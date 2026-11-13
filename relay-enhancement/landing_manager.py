@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Isolated five-protocol landing nodes. Never edits existing sing-box configs/services."""
-import argparse,base64,json,os,pathlib,re,secrets,shutil,socket,subprocess,sys,tempfile,time,urllib.parse,uuid
+import argparse,base64,ipaddress,json,os,pathlib,re,secrets,shutil,socket,subprocess,sys,tempfile,time,urllib.parse,uuid
 BASE=pathlib.Path("/etc/singbox-deploy-v2"); NODES=BASE/"nodes";CERT=BASE/"cert";UNITS=pathlib.Path("/etc/systemd/system")
 PROTOS={"ss":"shadowsocks","hy2":"hysteria2","tuic":"tuic","reality":"vless","anytls":"anytls"}
 def fail(m):raise RuntimeError(m)
@@ -18,16 +18,58 @@ def tls():
         key.chmod(0o600);cert.chmod(0o600)
     return {"enabled":True,"certificate_path":str(cert),"key_path":str(key)}
 def port_free(port,udp):
-    for kind in (socket.SOCK_DGRAM,socket.SOCK_STREAM):
-        with socket.socket(socket.AF_INET,kind) as s:
-            try:s.bind(("0.0.0.0",port))
-            except OSError:return False
+    # Probe both families and both transports; fail closed on unknown bind errors.
+    for family,addr in ((socket.AF_INET,"0.0.0.0"),(socket.AF_INET6,"::")):
+        for kind in (socket.SOCK_DGRAM,socket.SOCK_STREAM):
+            try:
+                with socket.socket(family,kind) as sock:
+                    if family==socket.AF_INET6:
+                        sock.setsockopt(socket.IPPROTO_IPV6,socket.IPV6_V6ONLY,1)
+                    sock.bind((addr,port))
+            except OSError as e:
+                if family==socket.AF_INET6 and e.errno in (97,93):
+                    continue
+                return False
     return True
+def choose_port(proto):
+    raw=input("新节点端口（回车随机 20000-60000）: ").strip()
+    if raw:
+        try:port=int(raw)
+        except ValueError:fail("端口必须是数字")
+        if not 1024<=port<=65535:fail("端口范围 1024-65535")
+        if not port_free(port,proto in ("hy2","tuic")):fail("端口已占用")
+        return port
+    for _ in range(200):
+        port=secrets.randbelow(40001)+20000
+        name=f"{proto}-{port}"
+        if (port_free(port,proto in ("hy2","tuic"))
+            and not (NODES/(name+".json")).exists()
+            and not (UNITS/("singbox-landing-"+name+".service")).exists()):
+            print("自动选择未占用端口:",port)
+            return port
+    fail("无法找到可用端口，请手动指定")
+def valid_host(host):
+    if not host or any(c in host for c in "/?#@ \\t\\r\\n"):return False
+    try:
+        ip=ipaddress.ip_address(host)
+        return ip.version==4 and ip.is_global
+    except ValueError:
+        return bool(re.fullmatch(r"(?=.{1,253}$)[A-Za-z0-9-]+(?:\\.[A-Za-z0-9-]+)+",host))
 def public_ip():
-    # Explicit operator input avoids unreliable public-IP discovery.
-    ip=input("落地机公网 IP 或域名: ").strip()
-    if not ip or any(c in ip for c in "/?#@ "):fail("公网地址不合法")
-    return ip
+    host=input("落地机公网 IPv4 或域名（回车自动检测）: ").strip()
+    if not host:
+        for url in ("https://api.ipify.org","https://ipv4.icanhazip.com"):
+            try:
+                found=run(["curl","-4","-fsS","--noproxy","*","--connect-timeout","4","--max-time","8",url]).strip()
+                if valid_host(found):
+                    print("检测到公网 IPv4:",found)
+                    host=found
+                    break
+            except (OSError,subprocess.CalledProcessError,subprocess.TimeoutExpired):
+                continue
+        if not host:fail("公网 IPv4 自动检测失败，请手动输入公网 IP 或域名")
+    if not valid_host(host):fail("公网 IPv4 或域名格式不合法")
+    return host
 def make(proto,port,host):
     password=secrets.token_urlsafe(24);uid=str(uuid.uuid4());tlsconf=None
     if proto in ("hy2","tuic","anytls"):tlsconf=tls()
@@ -97,7 +139,7 @@ def main():
         proto={"1":"ss","2":"hy2","3":"tuic","4":"reality","5":"anytls"}.get(choice)
         if not proto:continue
         try:
-            port=int(input("新节点端口 (1024-65535): ").strip())
+            port=choose_port(proto)
             host=public_ip()
             add(proto,port,host)
         except (RuntimeError,ValueError,subprocess.CalledProcessError,OSError) as e:print("失败:",str(e)[:700])
