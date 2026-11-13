@@ -103,7 +103,7 @@ export GOMEMLIMIT="$(lowmem)" GOGC=50 GOMAXPROCS=1
 EOF
 chmod +x "/etc/init.d/singbox-deploy-$id"; rc-update add "singbox-deploy-$id" default; rc-service "singbox-deploy-$id" start; else GOMEMLIMIT="$(lowmem)" GOGC=50 GOMAXPROCS=1 nohup sing-box run -c "$conf" >"$NODES/$id.log" 2>&1 </dev/null & echo $! > "$NODES/$id.pid"; say '当前环境无 init，重启后需要手动启动'; fi; }
 stop_node(){ local id=$1; if [[ -f "/etc/systemd/system/singbox-deploy-$id.service" ]]; then systemctl disable --now "singbox-deploy-$id.service" || true; rm -f "/etc/systemd/system/singbox-deploy-$id.service"; systemctl daemon-reload; elif [[ -f "/etc/init.d/singbox-deploy-$id" ]]; then rc-service "singbox-deploy-$id" stop || true; rc-update del "singbox-deploy-$id" default || true; rm -f "/etc/init.d/singbox-deploy-$id"; elif [[ -f "$NODES/$id.pid" ]]; then kill "$(cat "$NODES/$id.pid")" 2>/dev/null || true; fi; }
-add_node(){ local proto=$1 ip port external name label id uuid pw key pub sid path conf link inbound tls; prepare; ip=$(public_ip) || die '无法自动检测公网 IP'; say "自动识别公网 IP: $ip"; port=$(random_port); read -r -p "监听端口 [$port，回车随机]: " x; port=${x:-$port}; valid_port "$port" || die '监听端口无效'; port_available "$port" "$proto" || die "监听端口 $port 已被占用"; read -r -p "节点连接端口 [$port]: " x; external=${x:-$port}; valid_port "$external" || die '连接端口无效'; read -r -p "节点名称 [$proto]: " x; name=${x:-$proto}; [[ -n "$name" && ${#name} -le 80 ]] || die '节点名称无效'; label=$(urlenc "$name"); id="${proto}-$(date +%s)-$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')"; uuid=$(sing-box generate uuid); pw=$(openssl rand -hex 20); conf="$NODES/$id.json"; tls=$(jq -n --arg cert "$BASE/cert.pem" --arg key "$BASE/key.pem" '{enabled:true,server_name:"singbox.local",certificate_path:$cert,key_path:$key,alpn:["h3"]}'); case "$proto" in
+add_node(){ local proto=$1 shared_name="${2:-}" ip port external name label id uuid pw key pub sid path conf link inbound tls; prepare; ip=$(public_ip) || die '无法自动检测公网 IP'; say "自动识别公网 IP: $ip"; port=$(random_port); read -r -p "监听端口 [$port，回车随机]: " x; port=${x:-$port}; valid_port "$port" || die '监听端口无效'; port_available "$port" "$proto" || die "监听端口 $port 已被占用"; read -r -p "节点连接端口 [$port]: " x; external=${x:-$port}; valid_port "$external" || die '连接端口无效'; if [[ -n "$shared_name" ]]; then name="$shared_name"; else read -r -p "节点名称（支持中文和国旗）[$proto]: " x; name=${x:-$proto}; fi; [[ -n "$name" && ${#name} -le 80 ]] || die '节点名称无效'; label=$(urlenc "$name"); id="${proto}-$(date +%s)-$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')"; uuid=$(sing-box generate uuid); pw=$(openssl rand -hex 20); conf="$NODES/$id.json"; tls=$(jq -n --arg cert "$BASE/cert.pem" --arg key "$BASE/key.pem" '{enabled:true,server_name:"singbox.local",certificate_path:$cert,key_path:$key,alpn:["h3"]}'); case "$proto" in
  reality) key=$(sing-box generate reality-keypair); pub=$(sed -n 's/^PublicKey: *//p' <<< "$key"); key=$(sed -n 's/^PrivateKey: *//p' <<< "$key"); sid=$(openssl rand -hex 8); [[ -n "$pub" && -n "$key" ]] || die 'Reality 密钥生成失败'; inbound=$(jq -n --arg uuid "$uuid" --arg priv "$key" --arg sid "$sid" --argjson port "$port" '{type:"vless",tag:"in",listen:"0.0.0.0",listen_port:$port,users:[{uuid:$uuid,flow:"xtls-rprx-vision"}],tls:{enabled:true,server_name:"www.microsoft.com",reality:{enabled:true,handshake:{server:"www.microsoft.com",server_port:443},private_key:$priv,short_id:[$sid]}}}'); link="vless://$uuid@$ip:$external?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.microsoft.com&fp=chrome&pbk=$pub&sid=$sid&type=tcp#$label";;
  hy2) cert "$ip"; inbound=$(jq -n --arg pw "$pw" --argjson port "$port" --argjson tls "$tls" '{type:"hysteria2",tag:"in",listen:"0.0.0.0",listen_port:$port,users:[{password:$pw}],tls:$tls}'); link="hysteria2://$pw@$ip:$external?sni=singbox.local&insecure=1#$label";;
  tuic) cert "$ip"; inbound=$(jq -n --arg uuid "$uuid" --arg pw "$pw" --argjson port "$port" --argjson tls "$tls" '{type:"tuic",tag:"in",listen:"0.0.0.0",listen_port:$port,users:[{uuid:$uuid,password:$pw}],congestion_control:"bbr",tls:$tls}'); link="tuic://$uuid:$pw@$ip:$external?sni=singbox.local&alpn=h3&congestion_control=bbr&allow_insecure=1#$label";;
@@ -180,8 +180,47 @@ diagnose(){
   ss -lntu 2>/dev/null | head -35 || echo '未安装 ss，无法显示监听情况'
   say '云服务商安全组及外部 NAT 映射无法从服务器内部完全验证'
 }
+install_selected(){
+  local input token proto shared_name suffix
+  local -a selected=()
+  local -A seen=()
+  echo '可多选协议，编号用空格分隔，例如：1 2 3'
+  read -r -p '请选择协议编号（6=全部）: ' input
+  [[ -n "${input//[[:space:]]/}" ]] || { say '未选择协议'; return 1; }
+  for token in $input; do
+    case "$token" in
+      1) proto=reality;; 2) proto=hy2;; 3) proto=tuic;;
+      4) proto=vmess;; 5) proto=trojan;;
+      6) selected=(reality hy2 tuic vmess trojan); break;;
+      *) say "无效选项：$token（未执行安装）"; return 1;;
+    esac
+    if [[ -z "${seen[$proto]+x}" ]]; then selected+=("$proto"); seen[$proto]=1; fi
+  done
+  (("${#selected[@]}" > 0)) || { say '没有选择有效协议'; return 1; }
+  printf '本次安装：%s\n' "${selected[*]}"
+  read -r -p '请输入统一节点名称（支持中文、国旗，如 🇺🇸美国；留空使用默认名称）: ' shared_name
+  [[ ${#shared_name} -le 70 ]] || { say '名称过长（最多70个字符）'; return 1; }
+  for proto in "${selected[@]}"; do
+    suffix="$proto"
+    case "$proto" in reality) suffix=VLESS;; hy2) suffix=HY2;; tuic) suffix=TUIC;; vmess) suffix=VMess;; trojan) suffix=Trojan;; esac
+    if [[ -n "$shared_name" ]]; then
+      add_node "$proto" "$shared_name-$suffix"
+    else
+      add_node "$proto" "$suffix"
+    fi
+  done
+}
 mkdir -p "$NODES"; chmod 700 "$BASE" "$NODES"
 say '========== singbox-deploy =========='
-printf '系统: %s\n1. VLESS + Reality\n2. Hysteria2 (UDP)\n3. TUIC (UDP)\n4. VMess + WebSocket\n5. Trojan + TLS\n6. 逐个安装全部协议\n7. 查看节点\n8. 删除节点\n9. 重启所有节点\n10. 备份节点配置\n11. 恢复节点配置\n12. 故障诊断\n0. 退出\n' "$PRETTY_NAME"
-read -r -p '请选择: ' choice
-case "$choice" in 1) add_node reality;; 2) add_node hy2;; 3) add_node tuic;; 4) add_node vmess;; 5) add_node trojan;; 6) for p in reality hy2 tuic vmess trojan; do add_node "$p"; done;; 7) view_nodes;; 8) remove_node;; 9) restart_nodes;; 10) backup_nodes;; 11) restore_nodes;; 12) diagnose;; 0) exit;; *) die '无效选项';; esac
+printf '系统: %s\n1. VLESS + Reality\n2. Hysteria2 (UDP)\n3. TUIC (UDP)\n4. VMess + WebSocket\n5. Trojan + TLS\n6. 安装全部协议\n7. 查看节点\n8. 删除节点\n9. 重启所有节点\n10. 备份节点配置\n11. 恢复节点配置\n12. 故障诊断\n0. 退出\n' "$PRETTY_NAME"
+read -r -p '请选择（支持空格多选，如 1 2 3）: ' choice
+case "$choice" in
+  0) exit;;
+  7) view_nodes;; 8) remove_node;; 9) restart_nodes;;
+  10) backup_nodes;; 11) restore_nodes;; 12) diagnose;;
+  *) if [[ "$choice" =~ ^[[:space:]1-6]+$ ]]; then
+       install_selected <<< "$choice"
+     else
+       die '无效选项'
+     fi;;
+esac
