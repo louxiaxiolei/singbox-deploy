@@ -153,6 +153,70 @@ def wizard():
     print("入站节点:",p.stem,"落地:",name)
     attach_selected(p,c,name,ob)
 
+def batch_wizard():
+    print("\n=== 批量配置中转（同一个落地） ===")
+    available=items()
+    if not available:abort("没有本项目创建的节点")
+    print("选择多个节点，输入序号并以空格分隔，例如 1 2 3")
+    for i,(p,c) in enumerate(available,1):
+        print(f"{i}. {p.stem} | 当前出口: {c.get('route',{}).get('final','默认直连')}")
+    raw=ask("节点序号（空格分隔）")
+    tokens=raw.split()
+    if not tokens or any(not t.isdigit() or not 1<=int(t)<=len(available) for t in tokens):
+        abort("无效序号；未修改节点")
+    indexes=list(dict.fromkeys(int(t)-1 for t in tokens))
+    selected=[available[i] for i in indexes]
+    print("\n选择一个统一落地")
+    if not load(STORE,{}):
+        print("尚未添加落地 URI")
+        add()
+    else:
+        print("如需新落地，可先在高级管理中添加")
+    name,ob=landing()
+    prepared=[]
+    for p,c in selected:
+        route=c.get("route",{})
+        if route.get("rules") or route.get("rule_set") or route.get("final") not in (None,"direct","direct-out"):
+            abort(f"{p.stem} 存在自定义路由或已配置中转；未修改任何节点")
+        if any(x.get("tag")==ob["tag"] for x in c.get("outbounds",[])):
+            abort(f"{p.stem} 出站标签冲突；未修改任何节点")
+        service="singbox-deploy-"+p.stem+".service"
+        if subprocess.run(["systemctl","is-active","--quiet",service]).returncode:
+            abort(f"{service} 未运行；未修改任何节点")
+        new=copy.deepcopy(c)
+        new.setdefault("outbounds",[]).append(copy.deepcopy(ob))
+        new["route"]=dict(route,final=ob["tag"])
+        with tempfile.TemporaryDirectory(prefix="relay-check-") as d:
+            q=pathlib.Path(d)/"check.json";save(q,new);check(q)
+        prepared.append((p,new))
+    print("\n所有节点配置检查通过。测试落地连接（仅测试一次）")
+    test(ob)
+    print("将切换以下节点：")
+    for p,_ in prepared:print(" -",p.stem)
+    print("统一落地：",name)
+    if not confirm(f"确认切换以上 {len(prepared)} 个节点？每个节点会短暂重启"):
+        print("已取消，未修改节点");return
+    succeeded=[]
+    failed=[]
+    for p,new in prepared:
+        try:
+            print("正在切换：",p.stem)
+            apply(p,new)
+            succeeded.append(p.stem)
+        except (RuntimeError,OSError,subprocess.SubprocessError) as e:
+            failed.append((p.stem,str(e)))
+            print("失败：",p.stem,str(e))
+            print("已停止后续切换，避免继续影响其他节点")
+            break
+    print("\n批量执行结果：成功",len(succeeded),"失败",len(failed),
+          "未处理",len(prepared)-len(succeeded)-len(failed))
+    if succeeded:print("已切换：",", ".join(succeeded))
+    if failed:
+        print("失败节点：",failed[0][0],"原因：",failed[0][1])
+        print("已成功切换的节点不会自动恢复；可在菜单中逐个恢复直连。")
+    else:
+        print("全部切换完成；请逐个通过客户端验证出口 IP。")
+
 def attach_selected(p,c,name,ob):
     route=c.get("route",{})
     if route.get("rules") or route.get("rule_set") or route.get("final") not in (None,"direct","direct-out"):
@@ -195,10 +259,10 @@ def main():
     if os.geteuid()!=0:abort("需要 root")
     if not shutil.which("sing-box") or not shutil.which("curl"):abort("需要 sing-box 和 curl")
     while True:
-        print("\n=== 中转出口管理 ===\n1 添加落地 URI (SS/HY2/TUIC/VLESS Reality/AnyTLS)\n2 查看路由\n3 为已有节点设置落地\n4 恢复直连\n5 删除落地\n6 一键配置中转（推荐）\n0 返回")
+        print("\n=== 中转出口管理 ===\n1 添加落地 URI (SS/HY2/TUIC/VLESS Reality/AnyTLS)\n2 查看路由\n3 为已有节点设置落地\n4 恢复直连\n5 删除落地\n6 一键配置中转（推荐）\n7 批量配置多个节点使用同一落地\n0 返回")
         v=ask("请选择")
         if v=="0":return
-        try:{"1":add,"2":show,"3":attach,"4":detach,"5":delete,"6":wizard}[v]()
+        try:{"1":add,"2":show,"3":attach,"4":detach,"5":delete,"6":wizard,"7":batch_wizard}[v]()
         except KeyError:print("无效选项")
         except (RuntimeError,ValueError,OSError,subprocess.SubprocessError) as e:print("失败：",e)
 if __name__=="__main__":
@@ -206,6 +270,9 @@ if __name__=="__main__":
         if len(sys.argv)>1 and sys.argv[1]=="--wizard":
             if os.geteuid()!=0:abort("需要 root")
             wizard()
+        elif len(sys.argv)>1 and sys.argv[1]=="--batch":
+            if os.geteuid()!=0:abort("需要 root")
+            batch_wizard()
         elif len(sys.argv)>1 and sys.argv[1]=="--restore":
             if os.geteuid()!=0:abort("需要 root")
             detach()
