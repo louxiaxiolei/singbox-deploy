@@ -185,7 +185,7 @@ install_selected(){
   local -a selected=()
   local -A seen=()
   echo '可多选协议，编号用空格分隔，例如：1 2 3'
-  read -r -p '请选择协议编号（6=全部）: ' input
+  input="${1:-}"
   [[ -n "${input//[[:space:]]/}" ]] || { say '未选择协议'; return 1; }
   for token in $input; do
     case "$token" in
@@ -219,7 +219,7 @@ case "$choice" in
   7) view_nodes;; 8) remove_node;; 9) restart_nodes;;
   10) backup_nodes;; 11) restore_nodes;; 12) diagnose;;
   *) if [[ "$choice" =~ ^[[:space:]1-6]+$ ]]; then
-       install_selected <<< "$choice"
+       install_selected "$choice"
      else
        die '无效选项'
      fi;;
