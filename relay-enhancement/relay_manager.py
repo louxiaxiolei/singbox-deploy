@@ -119,15 +119,62 @@ def add():
     if ob.get("tls",{}).get("insecure"):print("警告：TLS 跳过证书验证")
     db[name]=ob;save(STORE,db);print("已保存，尚未修改任何节点")
 def attach():
-    p,c=node();name,ob=landing()
+    p,c=node()
+    name,ob=landing()
+    attach_selected(p,c,name,ob)
+
+def wizard():
+    print("\n=== 中转配置向导 ===")
+    print("步骤 1/3：选择要走落地的现有节点")
+    p,c=node()
+    current=c.get("route",{}).get("final","默认直连")
+    print("当前出口:",current)
+    if current.startswith("relay-"):
+        print("该节点已配置中转；为避免覆盖，先使用「查看路由」核对。如需更换，请先恢复直连。")
+        return
+    db=load(STORE,{})
+    print("\n步骤 2/3：选择落地")
+    if db:
+        print("1. 使用已保存的落地")
+        print("2. 添加新的落地 URI")
+        mode=ask("请选择 [1]")
+        if mode in ("","1"):
+            name,ob=landing()
+        elif mode=="2":
+            add()
+            name,ob=landing()
+        else:
+            abort("无效选择")
+    else:
+        print("尚无落地，先添加一次（URI 隐藏输入）")
+        add()
+        name,ob=landing()
+    print("\n步骤 3/3：自动测试、验证配置并确认切换")
+    print("入站节点:",p.stem,"落地:",name)
+    attach_selected(p,c,name,ob)
+
+def attach_selected(p,c,name,ob):
     route=c.get("route",{})
-    if route.get("rules") or route.get("rule_set") or route.get("final") not in (None,"direct","direct-out"):abort("已有自定义路由，请先恢复或人工检查")
-    if any(x.get("tag")==ob["tag"] for x in c.get("outbounds",[])):abort("出站标签冲突")
-    print("测试落地连通性（不会修改现有节点）");test(ob)
-    new=copy.deepcopy(c);new.setdefault("outbounds",[]).append(ob);new["route"]=dict(route,final=ob["tag"])
+    if route.get("rules") or route.get("rule_set") or route.get("final") not in (None,"direct","direct-out"):
+        abort("已有自定义路由，请先恢复或人工检查")
+    if any(x.get("tag")==ob["tag"] for x in c.get("outbounds",[])):
+        abort("出站标签冲突")
+    print("测试落地连通性（不会修改现有节点）")
+    test(ob)
+    new=copy.deepcopy(c)
+    new.setdefault("outbounds",[]).append(ob)
+    new["route"]=dict(route,final=ob["tag"])
     with tempfile.TemporaryDirectory() as d:
-        p2=pathlib.Path(d)/"check.json";save(p2,new);check(p2)
-    if confirm(f"切换 {p.stem} 至 {name}？将短暂重启此节点"):apply(p,new)
+        p2=pathlib.Path(d)/"check.json"
+        save(p2,new)
+        check(p2)
+    print("配置检查通过；只有输入 YES 才会切换。")
+    if confirm(f"切换 {p.stem} 至 {name}？将短暂重启此节点"):
+        apply(p,new)
+        print("下一步：客户端保持原节点链接，检查出口 IP 是否为落地 IP。")
+    else:
+        print("已取消，现有节点未修改。")
+
 def detach():
     p,c=node();tag=c.get("route",{}).get("final","")
     if not tag.startswith("relay-"):abort("此节点未使用本模块的中转")
@@ -148,10 +195,10 @@ def main():
     if os.geteuid()!=0:abort("需要 root")
     if not shutil.which("sing-box") or not shutil.which("curl"):abort("需要 sing-box 和 curl")
     while True:
-        print("\n=== LM 五协议中转测试版 ===\n1 添加落地 URI (SS/HY2/TUIC/VLESS Reality/AnyTLS)\n2 查看路由\n3 为已有节点设置落地（先测试）\n4 恢复直连\n5 删除落地\n0 返回")
+        print("\n=== 中转出口管理 ===\n1 添加落地 URI (SS/HY2/TUIC/VLESS Reality/AnyTLS)\n2 查看路由\n3 为已有节点设置落地\n4 恢复直连\n5 删除落地\n6 一键配置中转（推荐）\n0 返回")
         v=ask("请选择")
         if v=="0":return
-        try:{"1":add,"2":show,"3":attach,"4":detach,"5":delete}[v]()
+        try:{"1":add,"2":show,"3":attach,"4":detach,"5":delete,"6":wizard}[v]()
         except KeyError:print("无效选项")
         except (RuntimeError,ValueError,OSError,subprocess.SubprocessError) as e:print("失败：",e)
 if __name__=="__main__":
