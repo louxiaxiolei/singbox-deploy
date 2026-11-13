@@ -105,8 +105,7 @@ def add(proto,port,host):
     config,link=make(proto,port,host)
     with tempfile.TemporaryDirectory(prefix="landing-preflight-") as d:
         p=pathlib.Path(d)/"config.json";p.write_text(json.dumps(config));run(["sing-box","check","-c",str(p)])
-    print("预检查通过。将新增独立配置和 systemd 服务，不触碰旧服务。")
-    if input("输入 CREATE 确认新增: ").strip()!="CREATE":return
+    print("预检查通过，自动创建独立节点；不会修改旧服务。")
     NODES.mkdir(parents=True,exist_ok=True);NODES.chmod(0o700)
     try:
         write(conf,config);linkfile.write_text(link+"\n");linkfile.chmod(0o600)
@@ -122,7 +121,10 @@ def add(proto,port,host):
         raise
     print("新增成功:",name,"服务:",unit.name)
     print("节点链接已保存在",linkfile,"(含密码，请勿公开)")
-    print("查看链接: cat",linkfile)
+    print("\\n===== 可复制的节点链接 =====")
+    print(link)
+    print("===== 链接结束 =====\\n")
+    print("也可随时查看: cat",linkfile)
     print("请在云防火墙放行",("UDP" if proto in ("hy2","tuic") else "TCP"),port)
 def main():
     if os.geteuid()!=0:fail("需要 root")
