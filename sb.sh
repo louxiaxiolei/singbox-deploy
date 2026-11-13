@@ -38,12 +38,17 @@ node_install() {
   bash "$CACHE/install.sh"
 }
 relay_menu() {
+  local action=${1:-menu}
   ensure_python && systemd_required && singbox_required || return
   if [[ ! -d /etc/singbox-deploy/nodes ]] || ! compgen -G '/etc/singbox-deploy/nodes/*.json' >/dev/null;then
     echo '请先选择 1 安装本项目节点；本模块不会修改其他 sing-box 服务';return
   fi
   fetch relay-enhancement/relay_manager.py "$CACHE/relay_manager.py" || return
-  python3 "$CACHE/relay_manager.py"
+  case "$action" in
+    wizard) python3 "$CACHE/relay_manager.py" --wizard;;
+    restore) python3 "$CACHE/relay_manager.py" --restore;;
+    *) python3 "$CACHE/relay_manager.py";;
+  esac
 }
 landing_create() {
   ensure_python && systemd_required && singbox_required || return
@@ -85,21 +90,21 @@ while true;do
   echo '====== Sing-box 一键管理 ======'
   echo '1. 安装主流代理节点'
   echo '2. 查看、管理已有节点'
-  echo '3. 添加中转出口'
+  echo '3. 一键配置中转（选择节点 → 落地 → 测试 → 启用）'
   echo '4. 恢复节点直连'
   echo '5. 创建落地节点'
   echo '6. 管理落地节点（停用 / 启用 / 删除）'
-  echo '7. 查看运行状态和备份'
+  echo '7. 查看运行状态和备份'\n  echo '8. 中转高级管理（添加/查看/删除落地）'
   echo '0. 退出'
   read -r -p '请选择: ' choice || exit 0
   case "$choice" in
     1) ensure_curl && node_install || true;;
     2) ensure_curl && node_install || true;;
-    3) ensure_curl && relay_menu || true;;
-    4) ensure_curl && relay_menu || true;;
+    3) ensure_curl && relay_menu wizard || true;;
+    4) ensure_curl && relay_menu restore || true;;
     5) ensure_curl && landing_create || true;;
     6) ensure_curl && landing_manage || true;;
-    7) status;;
+    7) status;;\n    8) ensure_curl && relay_menu || true;;
     0) exit 0;;
     *) echo '无效选项';;
   esac
