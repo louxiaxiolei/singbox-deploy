@@ -47,6 +47,7 @@ relay_menu() {
   case "$action" in
     wizard) python3 "$CACHE/relay_manager.py" --wizard;;
     restore) python3 "$CACHE/relay_manager.py" --restore;;
+    batch) python3 "$CACHE/relay_manager.py" --batch;;
     *) python3 "$CACHE/relay_manager.py";;
   esac
 }
@@ -107,6 +108,7 @@ while true;do
     6) ensure_curl && landing_manage || true;;
     7) status;;
     8) ensure_curl && relay_menu || true;;
+    9) ensure_curl && relay_menu batch || true;;
     0) exit 0;;
     *) echo '无效选项';;
   esac
