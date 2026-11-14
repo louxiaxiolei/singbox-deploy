@@ -120,6 +120,8 @@ while true;do
   echo '6. 管理落地节点（停用 / 启用 / 删除）'
   echo '7. 查看运行状态和备份' 
   echo '8. 中转高级管理（添加/查看/删除落地）'
+  echo '9. 批量设置本机多个入口使用同一落地'
+  echo '10. 通过 SSH 管理远程中转 VPS（Akile 落地）'
   echo '0. 退出'
   read -r -p '请选择: ' choice || exit 0
   case "$choice" in
