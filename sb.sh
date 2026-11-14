@@ -86,6 +86,29 @@ status() {
   done
   echo '提示：原 Neburst 专用 /etc/sing-box/config.json 不由此通用菜单管理。'
 }
+remote_relay_manage() {
+  local host port user target remote_cmd
+  command -v ssh >/dev/null 2>&1 || { echo '缺少 SSH 客户端（openssh-client）';return 1; }
+  read -r -p '远程中转 VPS IP/域名: ' host
+  if [[ ! "$host" =~ ^[a-zA-Z0-9._:-]+$ || "$host" == -* ]];then echo '地址格式无效';return 1;fi
+  read -r -p 'SSH 端口 [22]: ' port
+  port=${port:-22}
+  if [[ ! "$port" =~ ^[0-9]+$ ]] || ((10#$port<1 || 10#$port>65535));then echo 'SSH 端口无效';return 1;fi
+  read -r -p 'SSH 用户 [root]: ' user
+  user=${user:-root}
+  [[ "$user" =~ ^[a-zA-Z_][a-zA-Z0-9_-]*$ ]] || { echo 'SSH 用户名无效';return 1; }
+  if [[ "$user" != root ]];then echo '当前仅支持 root SSH 登录（远程节点配置需要 root）';return 1;fi
+  target="$user@$host"
+  echo "即将通过 SSH 登录 $target:$port"
+  echo '首次连接请核对远程 SSH 主机指纹；不会禁用主机密钥验证。'
+  echo '远程端需已通过本项目安装入口节点。'
+  echo '进入远程菜单后，选择 9 批量设置落地；没有落地时先添加 Akile HY2 URI。'
+  echo '提示：Akile HY2 URI 在 /etc/singbox-deploy-v2/nodes/*.link，包含密码，勿公开。'
+  read -r -p '确认连接？输入 YES: ' confirm_remote
+  [[ "$confirm_remote" == YES ]] || { echo '已取消';return 0; }
+  remote_cmd='command -v curl >/dev/null 2>&1 && bash -c "$(curl -fsSL https://raw.githubusercontent.com/louxiaxiolei/singbox-deploy/relay/sb.sh)"'
+  ssh -tt -p "$port" -o ConnectTimeout=10 -o StrictHostKeyChecking=ask -- "$target" "$remote_cmd"
+}
 while true;do
   echo
   echo '====== Sing-box 一键管理 ======'
@@ -109,6 +132,7 @@ while true;do
     7) status;;
     8) ensure_curl && relay_menu || true;;
     9) ensure_curl && relay_menu batch || true;;
+    10) remote_relay_manage || true;;
     0) exit 0;;
     *) echo '无效选项';;
   esac
