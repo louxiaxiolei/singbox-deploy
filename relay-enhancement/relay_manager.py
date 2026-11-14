@@ -118,6 +118,20 @@ def add():
     print("解析成功:",ob["type"],ob["server"],ob["server_port"])
     if ob.get("tls",{}).get("insecure"):print("警告：TLS 跳过证书验证")
     db[name]=ob;save(STORE,db);print("已保存，尚未修改任何节点")
+def probe_uri():
+    """Test a remote URI without saving credentials or modifying node routes."""
+    print("\n=== HY2/VLESS 节点只读连通性测试 ===")
+    print("此测试仅验证 Akile → 远程节点的连接和出口 IP。")
+    print("它不能证明远程节点能够反向转发到 Akile。")
+    raw=getpass.getpass("输入 HY2/VLESS URI（隐藏输入）: ")
+    try:
+        ob=parse(raw,"relay-probe")
+    finally:
+        raw=""
+    print("协议:",ob["type"],"服务器:",ob["server"],"端口:",ob["server_port"])
+    test(ob)
+    print("测试结束：未保存 URI，未修改任何已有节点或 systemd 服务。")
+
 def attach():
     p,c=node()
     name,ob=landing()
@@ -259,10 +273,10 @@ def main():
     if os.geteuid()!=0:abort("需要 root")
     if not shutil.which("sing-box") or not shutil.which("curl"):abort("需要 sing-box 和 curl")
     while True:
-        print("\n=== 中转出口管理 ===\n1 添加落地 URI (SS/HY2/TUIC/VLESS Reality/AnyTLS)\n2 查看路由\n3 为已有节点设置落地\n4 恢复直连\n5 删除落地\n6 一键配置中转（推荐）\n7 批量配置多个节点使用同一落地\n0 返回")
+        print("\n=== 中转出口管理 ===\n1 添加落地 URI (SS/HY2/TUIC/VLESS Reality/AnyTLS)\n2 查看路由\n3 为已有节点设置落地\n4 恢复直连\n5 删除落地\n6 一键配置中转（推荐）\n7 批量配置多个节点使用同一落地\n8 只读测试 HY2/VLESS URI（不保存、不切换）\n0 返回")
         v=ask("请选择")
         if v=="0":return
-        try:{"1":add,"2":show,"3":attach,"4":detach,"5":delete,"6":wizard,"7":batch_wizard}[v]()
+        try:{"1":add,"2":show,"3":attach,"4":detach,"5":delete,"6":wizard,"7":batch_wizard,"8":probe_uri}[v]()
         except KeyError:print("无效选项")
         except (RuntimeError,ValueError,OSError,subprocess.SubprocessError) as e:print("失败：",e)
 if __name__=="__main__":
@@ -273,6 +287,9 @@ if __name__=="__main__":
         elif len(sys.argv)>1 and sys.argv[1]=="--batch":
             if os.geteuid()!=0:abort("需要 root")
             batch_wizard()
+        elif len(sys.argv)>1 and sys.argv[1]=="--probe":
+            if os.geteuid()!=0:abort("需要 root")
+            probe_uri()
         elif len(sys.argv)>1 and sys.argv[1]=="--restore":
             if os.geteuid()!=0:abort("需要 root")
             detach()
